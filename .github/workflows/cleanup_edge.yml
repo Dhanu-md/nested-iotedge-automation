@@ -1,0 +1,30 @@
+name: Cleanup Parent & Child IoT Edge
+
+on:
+  workflow_dispatch:
+
+jobs:
+  cleanup-parent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.PARENT_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan ${{ secrets.PARENT_HOST }} >> ~/.ssh/known_hosts
+          scp scripts/cleanup_iotedge.sh ${{ secrets.PARENT_SSH_USER }}@${{ secrets.PARENT_HOST }}:/home/${{ secrets.PARENT_SSH_USER }}/cleanup_iotedge.sh
+          ssh ${{ secrets.PARENT_SSH_USER }}@${{ secrets.PARENT_HOST }} "chmod +x ~/cleanup_iotedge.sh && ~/cleanup_iotedge.sh"
+
+  cleanup-child:
+    runs-on: ubuntu-latest
+    needs: cleanup-parent
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.CHILD_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan ${{ secrets.CHILD_HOST }} >> ~/.ssh/known_hosts
+          scp scripts/cleanup_iotedge.sh ${{ secrets.CHILD_SSH_USER }}@${{ secrets.CHILD_HOST }}:/home/${{ secrets.CHILD_SSH_USER }}/cleanup_iotedge.sh
+          ssh ${{ secrets.CHILD_SSH_USER }}@${{ secrets.CHILD_HOST }} "chmod +x ~/cleanup_iotedge.sh && ~/cleanup_iotedge.sh"
