@@ -1,0 +1,27 @@
+name: Deploy Parent IoT Edge
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-parent:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup SSH for parent
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.PARENT_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan ${{ secrets.PARENT_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Copy scripts to parent
+        run: |
+          scp scripts/cleanup_iotedge.sh ${{ secrets.PARENT_SSH_USER }}@${{ secrets.PARENT_HOST }}:/home/${{ secrets.PARENT_SSH_USER }}/cleanup_iotedge.sh
+          scp scripts/setup_parent_edge.sh ${{ secrets.PARENT_SSH_USER }}@${{ secrets.PARENT_HOST }}:/home/${{ secrets.PARENT_SSH_USER }}/setup_parent_edge.sh
+
+      - name: Run parent setup
+        run: |
+          ssh ${{ secrets.PARENT_SSH_USER }}@${{ secrets.PARENT_HOST }} "chmod +x ~/cleanup_iotedge.sh ~/setup_parent_edge.sh && ~/setup_parent_edge.sh"
