@@ -1,0 +1,47 @@
+name: Deploy Child IoT Edge (Nested)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-child:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup SSH for parent and child
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.PARENT_SSH_KEY }}" > ~/.ssh/id_rsa_parent
+          echo "${{ secrets.CHILD_SSH_KEY }}" > ~/.ssh/id_rsa_child
+          chmod 600 ~/.ssh/id_rsa_parent ~/.ssh/id_rsa_child
+          ssh-keyscan ${{ secrets.PARENT_HOST }} >> ~/.ssh/known_hosts
+          ssh-keyscan ${{ secrets.CHILD_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Fetch child certs from parent
+        run: |
+          # Child cert
+          SSH_CMD_PARENT="ssh -i ~/.ssh/id_rsa_parent ${{ secrets.PARENT_SSH_USER }}@${{ secrets.PARENT_HOST }}"
+          $SSH_CMD_PARENT "base64 -w0 /var/aziot/child_export/iot-edge-device-ca-child-cert-full-chain.cert.pem" > child-cert.b64
+          $SSH_CMD_PARENT "base64 -w0 /var/aziot/child_export/iot-edge-device-ca-child-cert.key.pem" > child-key.b64
+          $SSH_CMD_PARENT "base64 -w0 /var/aziot/child_export/azure-iot-test-only.root.ca.cert.pem" > root-ca.b64
+
+          base64 -d child-cert.b64 > iot-edge-device-ca-child-cert-full-chain.cert.pem
+          base64 -d child-key.b64 > iot-edge-device-ca-child-cert.key.pem
+          base64 -d root-ca.b64 > azure-iot-test-only.root.ca.cert.pem
+
+      - name: Copy certs + scripts to child
+        run: |
+          mkdir -p edge-certs
+          mv iot-edge-device-ca-child-cert-full-chain.cert.pem edge-certs/
+          mv iot-edge-device-ca-child-cert.key.pem edge-certs/
+          mv azure-iot-test-only.root.ca.cert.pem edge-certs/
+
+          scp -i ~/.ssh/id_rsa_child -r edge-certs ${{ secrets.CHILD_SSH_USER }}@${{ secrets.CHILD_HOST }}:/tmp/edge-certs
+          scp -i ~/.ssh/id_rsa_child scripts/cleanup_iotedge.sh ${{ secrets.CHILD_SSH_USER }}@${{ secrets.CHILD_HOST }}:/home/${{ secrets.CHILD_SSH_USER }}/cleanup_iotedge.sh
+          scp -i ~/.ssh/id_rsa_child scripts/setup_child_edge.sh ${{ secrets.CHILD_SSH_USER }}@${{ secrets.CHILD_HOST }}:/home/${{ secrets.CHILD_SSH_USER }}/setup_child_edge.sh
+
+      - name: Run child setup
+        run: |
+          ssh -i ~/.ssh/id_rsa_child ${{ secrets.CHILD_SSH_USER }}@${{ secrets.CHILD_HOST }} "chmod +x ~/cleanup_iotedge.sh ~/setup_child_edge.sh && ~/setup_child_edge.sh"
