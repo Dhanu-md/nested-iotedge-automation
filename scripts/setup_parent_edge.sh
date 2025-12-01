@@ -4,7 +4,7 @@ set -euo pipefail
 ### === CONFIG: EDIT THESE ===
 IOTHUB_HOSTNAME="iotHub-prod-in2.azure-devices.net"
 PARENT_DEVICE_ID="parent-iotedge-01p"
-PARENT_CONN_STRING=""
+PARENT_CONN_STRING="$PARENT_EDGE_DEVICE_CONNECTION_STRING"
 PARENT_HOSTNAME="parent-iotedge-01p"
 
 OS_CODENAME="jammy"   # Ubuntu 22.04
