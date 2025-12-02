@@ -1,36 +1,34 @@
 #!/bin/bash
 set -e
 
-CHILD_DEVICE_ID=${CHILD_DEVICE_ID:-child-edge-device}
-WORK_DIR=/home/$USER/automation/certs_work
+echo " Generating Child cert signed by Parent CA..."
 
-sudo mkdir -p /var/aziot/certs /var/aziot/cert_keys
-mkdir -p $WORK_DIR
+CERT_DIR=~/automation/generated_certs
+sudo mkdir -p $CERT_DIR
+sudo chmod 777 $CERT_DIR
 
-# Parent CA references
-PARENT_CA_CERT="/var/aziot/certs/iot-edge-device-ca-Parent-cert-full-chain.cert.pem"
-PARENT_CA_KEY="/var/aziot/cert_keys/iot-edge-device-ca-Parent-cert.key.pem"
+CHILD_CERT=$CERT_DIR/child-${CHILD_DEVICE_ID}.cert.pem
+CHILD_KEY=$CERT_DIR/child-${CHILD_DEVICE_ID}.key.pem
 
-# Output file names
-CHILD_CERT="$WORK_DIR/iot-edge-device-ca-${CHILD_DEVICE_ID}-full-chain.cert.pem"
-CHILD_KEY="$WORK_DIR/iot-edge-device-ca-${CHILD_DEVICE_ID}.key.pem"
-
-echo "🔹 Generating CHILD private key..."
 openssl genrsa -out $CHILD_KEY 4096
+openssl req -new -key $CHILD_KEY \
+  -subj "/CN=${CHILD_DEVICE_ID}" \
+  -out $CERT_DIR/child-${CHILD_DEVICE_ID}.csr
 
-echo "🔹 Creating CHILD certificate signed by PARENT CA..."
-openssl req -new -key $CHILD_KEY -subj "/CN=${CHILD_DEVICE_ID}" \
- | openssl x509 -req -CA $PARENT_CA_CERT -CAkey $PARENT_CA_KEY -CAcreateserial \
- -out $CHILD_CERT -days 365 -sha256
+# IMPORTANT — Parent CA path must match where we copied earlier
+openssl x509 -req -in $CERT_DIR/child-${CHILD_DEVICE_ID}.csr \
+  -CA /var/aziot/certs/parent-ca.cert.pem \
+  -CAkey /var/aziot/cert_keys/parent-ca.key.pem \
+  -CAcreateserial \
+  -out $CHILD_CERT \
+  -days 1825 -sha256
 
-# Move certs to runtime with correct owners
-echo "🔹 Installing certs into IoT Edge runtime..."
-sudo cp $CHILD_CERT /var/aziot/certs/
-sudo cp $CHILD_KEY /var/aziot/cert_keys/
+echo " Child certificate created"
 
-sudo chown aziotcs:aziotcs /var/aziot/certs/*
-sudo chown aziotks:aziotks /var/aziot/cert_keys/*
-sudo chmod 644 /var/aziot/certs/*
-sudo chmod 600 /var/aziot/cert_keys/*
-
-echo "✔ Child certificate created successfully"
+# Prepare transfer bundle
+EXPORT_DIR=~/child_export
+mkdir -p $EXPORT_DIR
+cp $CHILD_CERT $EXPORT_DIR/
+cp $CHILD_KEY  $EXPORT_DIR/
+chmod 644 $EXPORT_DIR/*
+echo " Export directory ready for SCP"
