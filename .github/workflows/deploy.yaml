@@ -3,99 +3,55 @@ name: Nested IoT Edge Deployment
 on:
   workflow_dispatch:
 
-env:
-  PARENT_DEVICE_ID: parent-iotedge-01p
-  CHILD_DEVICE_ID: child-iotedge-01p
-  IOT_HUB_HOSTNAME: iotHub-prod-in2.azure-devices.net
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-
     - name: Checkout repository
       uses: actions/checkout@v3
 
-    #############################################
-    # 🔹 1 — Generate full certificate chain
-    #############################################
-    - name: Generate certificate chain
-      run: |
-        set -e
-        mkdir -p generated_certs
-        cd generated_certs
-
-        ## ROOT CA
-        openssl genrsa -out root-ca.key.pem 4096
-        openssl req -x509 -new -key root-ca.key.pem -subj "/CN=iot-nested-root-ca" -days 3650 -out root-ca.cert.pem
-
-        ## PARENT CA
-        openssl genrsa -out parent-ca.key.pem 4096
-        openssl req -new -key parent-ca.key.pem -subj "/CN=${PARENT_DEVICE_ID}.ca" -out parent-ca.csr.pem
-        openssl x509 -req -in parent-ca.csr.pem -CA root-ca.cert.pem -CAkey root-ca.key.pem -CAcreateserial -days 1825 -out parent-ca.cert.pem
-        cat parent-ca.cert.pem root-ca.cert.pem > parent-ca-full-chain.cert.pem
-
-        ## CHILD CA
-        openssl genrsa -out child-ca.key.pem 4096
-        openssl req -new -key child-ca.key.pem -subj "/CN=${CHILD_DEVICE_ID}.ca" -out child-ca.csr.pem
-        openssl x509 -req -in child-ca.csr.pem -CA root-ca.cert.pem -CAkey root-ca.key.pem -CAcreateserial -days 1825 -out child-ca.cert.pem
-        cat child-ca.cert.pem root-ca.cert.pem > child-ca-full-chain.cert.pem
-
-        chmod 600 *.key.pem
-        chmod 644 *.cert.pem *.pem || true
-
-    #############################################
-    # 🔹 2 — Upload automation (scripts & templates) to parent
-    #############################################
-    - name: Upload automation to parent
+    ##########################################
+    # 1️⃣ Upload automation folder to PARENT
+    ##########################################
+    - name: Upload scripts + templates to parent
       uses: appleboy/scp-action@v0.1.7
       with:
         host: ${{ secrets.PARENT_IP }}
         username: ${{ secrets.PARENT_USER }}
         key: ${{ secrets.SSH_KEY }}
-        source: "scripts/*,config_templates/*"
+        source: "automation/*"
         target: "/home/${{ secrets.PARENT_USER }}/automation"
+        strip_components: 0
 
-    #############################################
-    # 🔹 3 — Upload certificate chain to parent
-    #############################################
-    - name: Relax permissions for SCP transfer
-      run: sudo chmod 644 generated_certs/*
-
-    - name: Transfer certs to parent
-      uses: appleboy/scp-action@v0.1.7
-      with:
-        host: ${{ secrets.PARENT_IP }}
-        username: ${{ secrets.PARENT_USER }}
-        key: ${{ secrets.SSH_KEY }}
-        source: "generated_certs/*"
-        target: "/home/${{ secrets.PARENT_USER }}/automation/generated_certs"
-
-    #############################################
-    # 🔹 4 — Run deployment on parent
-    #############################################
-    - name: Deploy parent
+    ##########################################
+    # 2️⃣ Execute deployment on PARENT
+    ##########################################
+    - name: Deploy on Parent VM
       uses: appleboy/ssh-action@v1.0.3
       with:
         host: ${{ secrets.PARENT_IP }}
         username: ${{ secrets.PARENT_USER }}
         key: ${{ secrets.SSH_KEY }}
         script: |
+          set -e
           cd ~/automation
-          bash scripts/01_install_runtime.sh
-          bash scripts/02_install_certs_parent.sh
-          envsubst < config_templates/parent_config.toml.tmpl > /etc/aziot/config.toml
-          bash scripts/03_setup_parent.sh
+
+          sudo bash scripts/01_install_runtime.sh
+          sudo bash scripts/02_install_certs_parent.sh
+          CHILD_DEVICE_ID=${{ secrets.CHILD_DEVICE_ID }} sudo bash scripts/03_generate_child_certs.sh
+
+          sudo envsubst < config_templates/parent_config.toml.tmpl > /etc/aziot/config.toml
+          sudo bash scripts/04_setup_parent.sh
 
           mkdir -p ~/child_export
-          cp ~/automation/generated_certs/*child* ~/child_export/
+          cp ~/automation/generated_certs/child-* ~/child_export/
           chmod 644 ~/child_export/*
 
-    #############################################
-    # 🔹 5 — Transfer child certs from parent → child
-    #############################################
-    - name: Transfer certs to child
+    ##########################################
+    # 3️⃣ Copy child certs to CHILD device
+    ##########################################
+    - name: Transfer certs to child VM
       uses: appleboy/scp-action@v0.1.7
       with:
         host: ${{ secrets.CHILD_IP }}
@@ -103,31 +59,38 @@ jobs:
         key: ${{ secrets.SSH_KEY }}
         source: "/home/${{ secrets.PARENT_USER }}/child_export/*"
         target: "/home/${{ secrets.CHILD_USER }}/child_received_certs"
+        strip_components: 0
 
-    #############################################
-    # 🔹 6 — Upload automation to child
-    #############################################
-    - name: Upload automation to child
+    ##########################################
+    # 4️⃣ Upload automation folder to CHILD
+    ##########################################
+    - name: Upload scripts + templates to child
       uses: appleboy/scp-action@v0.1.7
       with:
         host: ${{ secrets.CHILD_IP }}
         username: ${{ secrets.CHILD_USER }}
         key: ${{ secrets.SSH_KEY }}
-        source: "scripts/*,config_templates/*"
+        source: "automation/*"
         target: "/home/${{ secrets.CHILD_USER }}/automation"
+        strip_components: 0
 
-    #############################################
-    # 🔹 7 — Run deployment on child
-    #############################################
-    - name: Deploy child
+    ##########################################
+    # 5️⃣ Execute deployment on CHILD
+    ##########################################
+    - name: Deploy on Child VM
       uses: appleboy/ssh-action@v1.0.3
       with:
         host: ${{ secrets.CHILD_IP }}
         username: ${{ secrets.CHILD_USER }}
         key: ${{ secrets.SSH_KEY }}
         script: |
+          set -e
           cd ~/automation
-          bash scripts/01_install_runtime.sh
-          bash scripts/02_install_certs_child.sh
-          envsubst < config_templates/child_config.toml.tmpl > /etc/aziot/config.toml
-          bash scripts/04_setup_child.sh
+
+          sudo bash scripts/01_install_runtime.sh
+          sudo cp ~/child_received_certs/* /var/aziot/certs/
+          sudo cp ~/child_received_certs/* /var/aziot/cert_keys/ || true
+
+          sudo envsubst < config_templates/child_config.toml.tmpl > /etc/aziot/config.toml
+          sudo bash scripts/05_setup_child.sh
+
