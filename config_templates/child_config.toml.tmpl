@@ -1,0 +1,11 @@
+hostname = "${CHILD_HOSTNAME}"
+parent_hostname = "${PARENT_HOSTNAME}"
+trust_bundle_cert = "file:///var/aziot/certs/azure-iot-test-only.intermediate-full-chain.cert.pem"
+
+[edge_ca]
+cert = "file:///var/aziot/certs/iot-edge-device-ca-child-cert-full-chain.cert.pem"
+pk = "file:///var/aziot/cert_keys/iot-edge-device-ca-child-cert.key.pem"
+
+[provisioning]
+source = "manual"
+connection_string = "${CHILD_CONNECTION_STRING}"
