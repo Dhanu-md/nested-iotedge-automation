@@ -1,0 +1,11 @@
+hostname = "${PARENT_DEVICE_ID}"
+auto_reprovisioning_mode = "OnErrorOnly"
+trust_bundle_cert = "file:///var/aziot/certs/parent-ca.cert.pem"
+
+[edge_ca]
+cert = "file:///var/aziot/certs/parent-ca.cert.pem"
+pk = "file:///var/aziot/cert_keys/parent-ca.key.pem"
+
+[provisioning]
+source = "manual"
+connection_string = "HostName=${IOT_HUB_HOSTNAME};DeviceId=${PARENT_DEVICE_ID};SharedAccessKey=${PARENT_KEY}"
