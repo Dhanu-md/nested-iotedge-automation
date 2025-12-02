@@ -1,0 +1,46 @@
+name: Nested IoT Edge Deployment
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v3
+
+    - name: Deploy to parent VM
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.PARENT_IP }}
+        username: ${{ secrets.PARENT_USER }}
+        key: ${{ secrets.SSH_KEY }}
+        script: |
+          bash ~/scripts/01_install_runtime.sh
+          bash ~/scripts/02_generate_certs.sh
+          envsubst < config_templates/parent_config.toml.tmpl > config.toml
+          bash ~/scripts/03_setup_parent.sh
+
+    - name: Transfer child certs from parent to child
+      uses: appleboy/scp-action@v0.1.3
+      with:
+        host: ${{ secrets.CHILD_IP }}
+        username: ${{ secrets.CHILD_USER }}
+        key: ${{ secrets.SSH_KEY }}
+        source: "/var/aziot/certs/*child*"
+        target: "/var/aziot/certs/"
+
+    - name: Deploy to child VM
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.CHILD_IP }}
+        username: ${{ secrets.CHILD_USER }}
+        key: ${{ secrets.SSH_KEY }}
+        script: |
+          bash ~/scripts/01_install_runtime.sh
+          envsubst < config_templates/child_config.toml.tmpl > config.toml
+          bash ~/scripts/04_setup_child.sh
