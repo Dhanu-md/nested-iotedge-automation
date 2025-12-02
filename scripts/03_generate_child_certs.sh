@@ -1,34 +1,36 @@
 #!/bin/bash
 set -e
 
-CHILD_DEVICE_ID=${CHILD_DEVICE_ID:-child-iotedge-01p}
+CHILD_DEVICE_ID=${CHILD_DEVICE_ID:-child-edge-device}
+WORK_DIR=/home/$USER/automation/certs_work
 
-CERTS=/var/aziot/certs
-KEYS=/var/aziot/cert_keys
+sudo mkdir -p /var/aziot/certs /var/aziot/cert_keys
+mkdir -p $WORK_DIR
 
-mkdir -p $CERTS $KEYS
+# Parent CA references
+PARENT_CA_CERT="/var/aziot/certs/iot-edge-device-ca-Parent-cert-full-chain.cert.pem"
+PARENT_CA_KEY="/var/aziot/cert_keys/iot-edge-device-ca-Parent-cert.key.pem"
 
-# Generate child CA cert from Parent CA
-openssl req -newkey rsa:4096 -nodes \
-    -keyout $KEYS/iot-edge-device-ca-${CHILD_DEVICE_ID}.key.pem \
-    -subj "/CN=${CHILD_DEVICE_ID}.ca" \
-    -out $CERTS/${CHILD_DEVICE_ID}.csr.pem
+# Output file names
+CHILD_CERT="$WORK_DIR/iot-edge-device-ca-${CHILD_DEVICE_ID}-full-chain.cert.pem"
+CHILD_KEY="$WORK_DIR/iot-edge-device-ca-${CHILD_DEVICE_ID}.key.pem"
 
-openssl x509 -req \
-    -in $CERTS/${CHILD_DEVICE_ID}.csr.pem \
-    -CA $CERTS/iot-edge-device-ca-Parent-cert-full-chain.cert.pem \
-    -CAkey $KEYS/iot-edge-device-ca-Parent-cert.key.pem \
-    -CAcreateserial \
-    -out $CERTS/iot-edge-device-ca-${CHILD_DEVICE_ID}.cert.pem \
-    -days 365 \
-    -sha256
+echo "🔹 Generating CHILD private key..."
+openssl genrsa -out $CHILD_KEY 4096
 
-# Build child full chain
-cat \
-  $CERTS/iot-edge-device-ca-${CHILD_DEVICE_ID}.cert.pem \
-  $CERTS/iot-edge-device-ca-Parent-cert-full-chain.cert.pem \
-  > $CERTS/iot-edge-device-ca-${CHILD_DEVICE_ID}-full-chain.cert.pem
+echo "🔹 Creating CHILD certificate signed by PARENT CA..."
+openssl req -new -key $CHILD_KEY -subj "/CN=${CHILD_DEVICE_ID}" \
+ | openssl x509 -req -CA $PARENT_CA_CERT -CAkey $PARENT_CA_KEY -CAcreateserial \
+ -out $CHILD_CERT -days 365 -sha256
 
-chmod 644 $CERTS/*child* || true
-chmod 600 $KEYS/*child* || true
-echo "✔ Child certs generated"
+# Move certs to runtime with correct owners
+echo "🔹 Installing certs into IoT Edge runtime..."
+sudo cp $CHILD_CERT /var/aziot/certs/
+sudo cp $CHILD_KEY /var/aziot/cert_keys/
+
+sudo chown aziotcs:aziotcs /var/aziot/certs/*
+sudo chown aziotks:aziotks /var/aziot/cert_keys/*
+sudo chmod 644 /var/aziot/certs/*
+sudo chmod 600 /var/aziot/cert_keys/*
+
+echo "✔ Child certificate created successfully"
