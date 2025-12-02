@@ -37,8 +37,9 @@ jobs:
           cd ~/automation
           bash scripts/01_install_runtime.sh
           bash scripts/02_generate_certs.sh
+          CHILD_DEVICE_ID=${{ secrets.CHILD_DEVICE_ID }} bash scripts/03_generate_child_certs.sh              
+          bash scripts/04_setup_parent.sh
           envsubst < config_templates/parent_config.toml.tmpl > config.toml
-          bash scripts/03_setup_parent.sh
           mkdir -p ~/child_export
           cp /var/aziot/certs/*child* ~/child_export/ || true
           cp /var/aziot/cert_keys/*child* ~/child_export/ || true
