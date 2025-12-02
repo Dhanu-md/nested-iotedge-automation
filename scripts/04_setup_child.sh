@@ -1,17 +1,23 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
-echo " Installing certs for child"
-sudo mkdir -p /var/aziot/certs /var/aziot/cert_keys
-sudo cp ~/child_received_certs/*full-chain*.pem /var/aziot/certs/
-sudo cp ~/child_received_certs/*key*.pem /var/aziot/cert_keys/
+echo " Applying config on CHILD..."
 
-sudo chmod 644 /var/aziot/certs/*
-sudo chmod 600 /var/aziot/cert_keys/*
+if [ ! -f "$HOME/automation/config.toml" ]; then
+  echo " config.toml not found in ~/automation"
+  exit 1
+fi
 
-echo " Applying config"
-sudo cp ~/config.toml /etc/aziot/config.toml
+sudo mkdir -p /etc/aziot
+sudo cp "$HOME/automation/config.toml" /etc/aziot/config.toml
+sudo chown root:root /etc/aziot/config.toml
+sudo chmod 644 /etc/aziot/config.toml
+
 sudo iotedge config apply
 sudo iotedge system restart
 
-echo "✔ Child deployment complete"
+echo "⏱ Waiting 10s for services..."
+sleep 10
+
+sudo iotedge system status || true
+echo "✔ Child setup complete."
