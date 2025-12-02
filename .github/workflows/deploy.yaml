@@ -11,10 +11,8 @@ jobs:
     - name: Checkout repo
       uses: actions/checkout@v3
 
-    ###########################################
-    # 1️⃣ Copy scripts + templates → PARENT
-    ###########################################
-    - name: Upload automation files to parent
+    # 1️⃣ Copy scripts & templates to PARENT
+    - name: Upload automation to parent
       uses: appleboy/scp-action@v0.1.7
       with:
         host: ${{ secrets.PARENT_IP }}
@@ -22,11 +20,8 @@ jobs:
         key: ${{ secrets.SSH_KEY }}
         source: "scripts/*,config_templates/*"
         target: "/home/${{ secrets.PARENT_USER }}/automation"
-        strip_components: 0
 
-    ###########################################
-    # 2️⃣ RUN parent deployment
-    ###########################################
+    # 2️⃣ Run deployment on parent
     - name: Deploy on Parent VM
       uses: appleboy/ssh-action@v1.0.3
       with:
@@ -37,30 +32,25 @@ jobs:
           cd ~/automation
           bash scripts/01_install_runtime.sh
           bash scripts/02_generate_certs.sh
-          CHILD_DEVICE_ID=${{ secrets.CHILD_DEVICE_ID }} bash scripts/03_generate_child_certs.sh              
+          CHILD_DEVICE_ID=${{ secrets.CHILD_DEVICE_ID }} bash scripts/03_generate_child_certs.sh
           bash scripts/04_setup_parent.sh
           envsubst < config_templates/parent_config.toml.tmpl > config.toml
           mkdir -p ~/child_export
-          cp /var/aziot/certs/*child* ~/child_export/ || true
-          cp /var/aziot/cert_keys/*child* ~/child_export/ || true
+          cp ~/automation/certs_work/*child* ~/child_export/ || true
           chmod 644 ~/child_export/* || true
 
-    ###########################################
-    # 3️⃣ Copy child certs → CHILD VM
-    ###########################################
-    - name: Transfer certs to child VM
+    # 3️⃣ Transfer child certs to CHILD VM
+    - name: Transfer certs to child
       uses: appleboy/scp-action@v0.1.7
       with:
         host: ${{ secrets.CHILD_IP }}
         username: ${{ secrets.CHILD_USER }}
         key: ${{ secrets.SSH_KEY }}
-        source: "~/child_export/*"
+        source: "/home/${{ secrets.PARENT_USER }}/child_export/*"
         target: "/home/${{ secrets.CHILD_USER }}/child_received_certs"
 
-    ###########################################
-    # 4️⃣ Copy automation files → CHILD VM
-    ###########################################
-    - name: Upload scripts + templates to child
+    # 4️⃣ Copy scripts & templates to CHILD
+    - name: Upload automation to child
       uses: appleboy/scp-action@v0.1.7
       with:
         host: ${{ secrets.CHILD_IP }}
@@ -69,9 +59,7 @@ jobs:
         source: "scripts/*,config_templates/*"
         target: "/home/${{ secrets.CHILD_USER }}/automation"
 
-    ###########################################
-    # 5️⃣ Run CHILD deployment
-    ###########################################
+    # 5️⃣ Deploy on CHILD
     - name: Deploy on Child VM
       uses: appleboy/ssh-action@v1.0.3
       with:
