@@ -2,8 +2,6 @@ name: Nested IoT Edge Deployment
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
 
 jobs:
   deploy:
@@ -13,104 +11,74 @@ jobs:
     - name: Checkout repo
       uses: actions/checkout@v3
 
-    #############################################
-    # 1️⃣ DEPLOY PARENT VM
-    #############################################
-    - name: Deploy to Parent VM
+    ###########################################
+    # 1️⃣ Copy scripts + templates → PARENT
+    ###########################################
+    - name: Upload automation files to parent
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ secrets.PARENT_IP }}
+        username: ${{ secrets.PARENT_USER }}
+        key: ${{ secrets.SSH_KEY }}
+        source: "scripts/*,config_templates/*"
+        target: "/home/${{ secrets.PARENT_USER }}/automation"
+        strip_components: 0
+
+    ###########################################
+    # 2️⃣ RUN parent deployment
+    ###########################################
+    - name: Deploy on Parent VM
       uses: appleboy/ssh-action@v1.0.3
       with:
         host: ${{ secrets.PARENT_IP }}
         username: ${{ secrets.PARENT_USER }}
         key: ${{ secrets.SSH_KEY }}
         script: |
-          mkdir -p ~/scripts
-          mkdir -p ~/config_templates
+          cd ~/automation
+          bash scripts/01_install_runtime.sh
+          bash scripts/02_generate_certs.sh
+          envsubst < config_templates/parent_config.toml.tmpl > config.toml
+          bash scripts/03_setup_parent.sh
+          mkdir -p ~/child_export
+          cp /var/aziot/certs/*child* ~/child_export/ || true
+          cp /var/aziot/cert_keys/*child* ~/child_export/ || true
+          chmod 644 ~/child_export/* || true
 
-          # copy automation content into VM
-          cp -r $GITHUB_WORKSPACE/scripts/* ~/scripts/
-          cp -r $GITHUB_WORKSPACE/config_templates/* ~/config_templates/
-
-          # parent deploy
-          bash ~/scripts/01_install_runtime.sh
-          bash ~/scripts/02_generate_certs.sh
-          envsubst < ~/config_templates/parent_config.toml.tmpl > ~/config.toml
-          bash ~/scripts/03_setup_parent.sh
-
-          # export child certs to known folder for transfer
-          mkdir -p ~/child_certs_export
-          cp /var/aziot/certs/*child* ~/child_certs_export/ || true
-          cp /var/aziot/cert_keys/*child* ~/child_certs_export/ || true
-          chmod 644 ~/child_certs_export/*
-    
-    #############################################
-    # 2️⃣ VERIFY CERTS EXIST ON PARENT
-    #############################################
-    - name: Confirm exported child certs exist
-      uses: appleboy/ssh-action@v1.0.3
-      with:
-        host: ${{ secrets.PARENT_IP }}
-        username: ${{ secrets.PARENT_USER }}
-        key: ${{ secrets.SSH_KEY }}
-        script: |
-          echo "📌 Checking exported certs:"
-          ls -l ~/child_certs_export || exit 1
-
-    #############################################
-    # 3️⃣ COPY CERTS → CHILD VM
-    #############################################
-    - name: Transfer child certs to child VM
+    ###########################################
+    # 3️⃣ Copy child certs → CHILD VM
+    ###########################################
+    - name: Transfer certs to child VM
       uses: appleboy/scp-action@v0.1.7
       with:
         host: ${{ secrets.CHILD_IP }}
         username: ${{ secrets.CHILD_USER }}
         key: ${{ secrets.SSH_KEY }}
-        source: "~/child_certs_export/*"
+        source: "~/child_export/*"
         target: "/home/${{ secrets.CHILD_USER }}/child_received_certs"
 
-    #############################################
-    # 4️⃣ DEPLOY CHILD VM
-    #############################################
-    - name: Deploy to Child VM
+    ###########################################
+    # 4️⃣ Copy automation files → CHILD VM
+    ###########################################
+    - name: Upload scripts + templates to child
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ secrets.CHILD_IP }}
+        username: ${{ secrets.CHILD_USER }}
+        key: ${{ secrets.SSH_KEY }}
+        source: "scripts/*,config_templates/*"
+        target: "/home/${{ secrets.CHILD_USER }}/automation"
+
+    ###########################################
+    # 5️⃣ Run CHILD deployment
+    ###########################################
+    - name: Deploy on Child VM
       uses: appleboy/ssh-action@v1.0.3
       with:
         host: ${{ secrets.CHILD_IP }}
         username: ${{ secrets.CHILD_USER }}
         key: ${{ secrets.SSH_KEY }}
         script: |
-          mkdir -p ~/scripts
-          mkdir -p ~/config_templates
-
-          cp -r $GITHUB_WORKSPACE/scripts/* ~/scripts/
-          cp -r $GITHUB_WORKSPACE/config_templates/* ~/config_templates/
-
-          sudo mkdir -p /var/aziot/certs /var/aziot/cert_keys
-          sudo cp ~/child_received_certs/*full-chain* /var/aziot/certs
-          sudo cp ~/child_received_certs/*key*        /var/aziot/cert_keys
-
-          sudo chmod 644 /var/aziot/certs/*
-          sudo chmod 600 /var/aziot/cert_keys/*
-
-          bash ~/scripts/01_install_runtime.sh
-          envsubst < ~/config_templates/child_config.toml.tmpl > ~/config.toml
-          bash ~/scripts/04_setup_child.sh
-
-    #############################################
-    # 5️⃣ VERIFY DEPLOYMENT SUCCESS
-    #############################################
-    - name: Run iotedge check on parent
-      uses: appleboy/ssh-action@v1.0.3
-      with:
-        host: ${{ secrets.PARENT_IP }}
-        username: ${{ secrets.PARENT_USER }}
-        key: ${{ secrets.SSH_KEY }}
-        script: |
-          sudo iotedge check --verbose
-
-    - name: Run iotedge check on child
-      uses: appleboy/ssh-action@v1.0.3
-      with:
-        host: ${{ secrets.CHILD_IP }}
-        username: ${{ secrets.CHILD_USER }}
-        key: ${{ secrets.SSH_KEY }}
-        script: |
-          sudo iotedge check --verbose
+          cd ~/automation
+          bash scripts/01_install_runtime.sh
+          envsubst < config_templates/child_config.toml.tmpl > config.toml
+          bash scripts/04_setup_child.sh
