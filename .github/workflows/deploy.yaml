@@ -13,114 +13,121 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repo
+
+    - name: Checkout repository
       uses: actions/checkout@v3
 
-    ###########################################
-    # 1) Generate CA + Parent/Child certs on runner
-    ###########################################
-    - name: Generate certificates
+    #############################################
+    # 🔹 1 — Generate full certificate chain
+    #############################################
+    - name: Generate certificate chain
       run: |
         set -e
         mkdir -p generated_certs
         cd generated_certs
 
-        echo "🔹 Generating ROOT CA"
+        ## ROOT CA
         openssl genrsa -out root-ca.key.pem 4096
         openssl req -x509 -new -key root-ca.key.pem -subj "/CN=iot-nested-root-ca" -days 3650 -out root-ca.cert.pem
 
-        echo "🔹 Generating PARENT CA"
+        ## PARENT CA
         openssl genrsa -out parent-ca.key.pem 4096
         openssl req -new -key parent-ca.key.pem -subj "/CN=${PARENT_DEVICE_ID}.ca" -out parent-ca.csr.pem
         openssl x509 -req -in parent-ca.csr.pem -CA root-ca.cert.pem -CAkey root-ca.key.pem -CAcreateserial -days 1825 -out parent-ca.cert.pem
         cat parent-ca.cert.pem root-ca.cert.pem > parent-ca-full-chain.cert.pem
 
-        echo "🔹 Generating CHILD CA"
+        ## CHILD CA
         openssl genrsa -out child-ca.key.pem 4096
         openssl req -new -key child-ca.key.pem -subj "/CN=${CHILD_DEVICE_ID}.ca" -out child-ca.csr.pem
         openssl x509 -req -in child-ca.csr.pem -CA root-ca.cert.pem -CAkey root-ca.key.pem -CAcreateserial -days 1825 -out child-ca.cert.pem
         cat child-ca.cert.pem root-ca.cert.pem > child-ca-full-chain.cert.pem
 
-        ls -l
+        chmod 600 *.key.pem
+        chmod 644 *.cert.pem *.pem || true
 
-    ###########################################
-    # 2) Upload repo + certs to PARENT VM
-    ###########################################
+    #############################################
+    # 🔹 2 — Upload automation (scripts & templates) to parent
+    #############################################
     - name: Upload automation to parent
       uses: appleboy/scp-action@v0.1.7
       with:
         host: ${{ secrets.PARENT_IP }}
         username: ${{ secrets.PARENT_USER }}
         key: ${{ secrets.SSH_KEY }}
-        source: "."
+        source: "scripts/*,config_templates/*"
         target: "/home/${{ secrets.PARENT_USER }}/automation"
 
-    ###########################################
-    # 3) Run deployment on PARENT
-    ###########################################
-    - name: Deploy on Parent VM
+    #############################################
+    # 🔹 3 — Upload certificate chain to parent
+    #############################################
+    - name: Relax permissions for SCP transfer
+      run: sudo chmod 644 generated_certs/*
+
+    - name: Transfer certs to parent
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ secrets.PARENT_IP }}
+        username: ${{ secrets.PARENT_USER }}
+        key: ${{ secrets.SSH_KEY }}
+        source: "generated_certs/*"
+        target: "/home/${{ secrets.PARENT_USER }}/automation/generated_certs"
+
+    #############################################
+    # 🔹 4 — Run deployment on parent
+    #############################################
+    - name: Deploy parent
       uses: appleboy/ssh-action@v1.0.3
       with:
         host: ${{ secrets.PARENT_IP }}
         username: ${{ secrets.PARENT_USER }}
         key: ${{ secrets.SSH_KEY }}
         script: |
-          set -e
           cd ~/automation
+          bash scripts/01_install_runtime.sh
+          bash scripts/02_install_certs_parent.sh
+          envsubst < config_templates/parent_config.toml.tmpl > /etc/aziot/config.toml
+          bash scripts/03_setup_parent.sh
 
-          chmod +x scripts/*.sh
+          mkdir -p ~/child_export
+          cp ~/automation/generated_certs/*child* ~/child_export/
+          chmod 644 ~/child_export/*
 
-          echo "== Install IoT Edge on PARENT =="
-          ./scripts/01_install_runtime.sh
+    #############################################
+    # 🔹 5 — Transfer child certs from parent → child
+    #############################################
+    - name: Transfer certs to child
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ secrets.CHILD_IP }}
+        username: ${{ secrets.CHILD_USER }}
+        key: ${{ secrets.SSH_KEY }}
+        source: "/home/${{ secrets.PARENT_USER }}/child_export/*"
+        target: "/home/${{ secrets.CHILD_USER }}/child_received_certs"
 
-          echo "== Install certs on PARENT =="
-          ./scripts/02_install_certs_parent.sh
-
-          echo "== Render config.toml for PARENT =="
-          export HOST_FQDN=$(hostname --fqdn)
-          export PARENT_CONNECTION_STRING="${{ secrets.PARENT_CONNECTION_STRING }}"
-          envsubst < config_templates/parent_config.toml.tmpl > config.toml
-
-          echo "== Apply config on PARENT =="
-          ./scripts/03_setup_parent.sh
-
-    ###########################################
-    # 4) Upload repo + certs to CHILD VM
-    ###########################################
+    #############################################
+    # 🔹 6 — Upload automation to child
+    #############################################
     - name: Upload automation to child
       uses: appleboy/scp-action@v0.1.7
       with:
         host: ${{ secrets.CHILD_IP }}
         username: ${{ secrets.CHILD_USER }}
         key: ${{ secrets.SSH_KEY }}
-        source: "."
+        source: "scripts/*,config_templates/*"
         target: "/home/${{ secrets.CHILD_USER }}/automation"
 
-    ###########################################
-    # 5) Run deployment on CHILD
-    ###########################################
-    - name: Deploy on Child VM
+    #############################################
+    # 🔹 7 — Run deployment on child
+    #############################################
+    - name: Deploy child
       uses: appleboy/ssh-action@v1.0.3
       with:
         host: ${{ secrets.CHILD_IP }}
         username: ${{ secrets.CHILD_USER }}
         key: ${{ secrets.SSH_KEY }}
         script: |
-          set -e
           cd ~/automation
-
-          chmod +x scripts/*.sh
-
-          echo "== Install IoT Edge on CHILD =="
-          ./scripts/01_install_runtime.sh
-
-          echo "== Install certs on CHILD =="
-          ./scripts/02_install_certs_child.sh
-
-          echo "== Render config.toml for CHILD =="
-          export HOST_FQDN=$(hostname --fqdn)
-          export CHILD_CONNECTION_STRING="${{ secrets.CHILD_CONNECTION_STRING }}"
-          envsubst < config_templates/child_config.toml.tmpl > config.toml
-
-          echo "== Apply config on CHILD =="
-          ./scripts/04_setup_child.sh
+          bash scripts/01_install_runtime.sh
+          bash scripts/02_install_certs_child.sh
+          envsubst < config_templates/child_config.toml.tmpl > /etc/aziot/config.toml
+          bash scripts/04_setup_child.sh
