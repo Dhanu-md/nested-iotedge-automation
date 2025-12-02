@@ -13,6 +13,21 @@ jobs:
     - name: Checkout repo
       uses: actions/checkout@v3
 
+    #####################################################
+    # COPY REPO TO PARENT VM
+    #####################################################
+    - name: Upload repo to parent VM
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ secrets.PARENT_IP }}
+        username: ${{ secrets.PARENT_USER }}
+        key: ${{ secrets.SSH_KEY }}
+        source: "./"
+        target: "/home/${{ secrets.PARENT_USER }}/nested-iotedge-automation"
+
+    #####################################################
+    # RUN DEPLOYMENT ON PARENT VM
+    #####################################################
     - name: Deploy to parent VM
       uses: appleboy/ssh-action@v1.0.3
       with:
@@ -20,13 +35,18 @@ jobs:
         username: ${{ secrets.PARENT_USER }}
         key: ${{ secrets.SSH_KEY }}
         script: |
-          bash ~/scripts/01_install_runtime.sh
-          bash ~/scripts/02_generate_certs.sh
+          cd ~/nested-iotedge-automation
+          chmod +x scripts/*.sh
+          ./scripts/01_install_runtime.sh
+          ./scripts/02_generate_certs.sh
           envsubst < config_templates/parent_config.toml.tmpl > config.toml
-          bash ~/scripts/03_setup_parent.sh
+          ./scripts/03_setup_parent.sh
 
-    - name: Transfer child certs from parent to child
-      uses: appleboy/scp-action@v0.1.3
+    #####################################################
+    # COPY CERTS TO CHILD VM
+    #####################################################
+    - name: Transfer child certificates from parent to child
+      uses: appleboy/scp-action@v0.1.7
       with:
         host: ${{ secrets.CHILD_IP }}
         username: ${{ secrets.CHILD_USER }}
@@ -34,6 +54,21 @@ jobs:
         source: "/var/aziot/certs/*child*"
         target: "/var/aziot/certs/"
 
+    #####################################################
+    # COPY REPO TO CHILD VM
+    #####################################################
+    - name: Upload repo to child VM
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ secrets.CHILD_IP }}
+        username: ${{ secrets.CHILD_USER }}
+        key: ${{ secrets.SSH_KEY }}
+        source: "./"
+        target: "/home/${{ secrets.CHILD_USER }}/nested-iotedge-automation"
+
+    #####################################################
+    # RUN DEPLOYMENT ON CHILD VM
+    #####################################################
     - name: Deploy to child VM
       uses: appleboy/ssh-action@v1.0.3
       with:
@@ -41,6 +76,8 @@ jobs:
         username: ${{ secrets.CHILD_USER }}
         key: ${{ secrets.SSH_KEY }}
         script: |
-          bash ~/scripts/01_install_runtime.sh
+          cd ~/nested-iotedge-automation
+          chmod +x scripts/*.sh
+          ./scripts/01_install_runtime.sh
           envsubst < config_templates/child_config.toml.tmpl > config.toml
-          bash ~/scripts/04_setup_child.sh
+          ./scripts/04_setup_child.sh
