@@ -3,6 +3,11 @@ name: Nested IoT Edge Deployment
 on:
   workflow_dispatch:
 
+env:
+  PARENT_DEVICE_ID: parent-iotedge-01p
+  CHILD_DEVICE_ID: child-iotedge-01p
+  IOT_HUB_HOSTNAME: iotHub-prod-in2.azure-devices.net
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -11,17 +16,48 @@ jobs:
     - name: Checkout repo
       uses: actions/checkout@v3
 
-    # 1️⃣ Copy scripts & templates to PARENT
+    ###########################################
+    # 1) Generate CA + Parent/Child certs on runner
+    ###########################################
+    - name: Generate certificates
+      run: |
+        set -e
+        mkdir -p generated_certs
+        cd generated_certs
+
+        echo "🔹 Generating ROOT CA"
+        openssl genrsa -out root-ca.key.pem 4096
+        openssl req -x509 -new -key root-ca.key.pem -subj "/CN=iot-nested-root-ca" -days 3650 -out root-ca.cert.pem
+
+        echo "🔹 Generating PARENT CA"
+        openssl genrsa -out parent-ca.key.pem 4096
+        openssl req -new -key parent-ca.key.pem -subj "/CN=${PARENT_DEVICE_ID}.ca" -out parent-ca.csr.pem
+        openssl x509 -req -in parent-ca.csr.pem -CA root-ca.cert.pem -CAkey root-ca.key.pem -CAcreateserial -days 1825 -out parent-ca.cert.pem
+        cat parent-ca.cert.pem root-ca.cert.pem > parent-ca-full-chain.cert.pem
+
+        echo "🔹 Generating CHILD CA"
+        openssl genrsa -out child-ca.key.pem 4096
+        openssl req -new -key child-ca.key.pem -subj "/CN=${CHILD_DEVICE_ID}.ca" -out child-ca.csr.pem
+        openssl x509 -req -in child-ca.csr.pem -CA root-ca.cert.pem -CAkey root-ca.key.pem -CAcreateserial -days 1825 -out child-ca.cert.pem
+        cat child-ca.cert.pem root-ca.cert.pem > child-ca-full-chain.cert.pem
+
+        ls -l
+
+    ###########################################
+    # 2) Upload repo + certs to PARENT VM
+    ###########################################
     - name: Upload automation to parent
       uses: appleboy/scp-action@v0.1.7
       with:
         host: ${{ secrets.PARENT_IP }}
         username: ${{ secrets.PARENT_USER }}
         key: ${{ secrets.SSH_KEY }}
-        source: "scripts/*,config_templates/*"
+        source: "."
         target: "/home/${{ secrets.PARENT_USER }}/automation"
 
-    # 2️⃣ Run deployment on parent
+    ###########################################
+    # 3) Run deployment on PARENT
+    ###########################################
     - name: Deploy on Parent VM
       uses: appleboy/ssh-action@v1.0.3
       with:
@@ -29,37 +65,40 @@ jobs:
         username: ${{ secrets.PARENT_USER }}
         key: ${{ secrets.SSH_KEY }}
         script: |
+          set -e
           cd ~/automation
-          bash scripts/01_install_runtime.sh
-          bash scripts/02_generate_certs.sh
-          CHILD_DEVICE_ID=${{ secrets.CHILD_DEVICE_ID }} bash scripts/03_generate_child_certs.sh
-          bash scripts/04_setup_parent.sh
+
+          chmod +x scripts/*.sh
+
+          echo "== Install IoT Edge on PARENT =="
+          ./scripts/01_install_runtime.sh
+
+          echo "== Install certs on PARENT =="
+          ./scripts/02_install_certs_parent.sh
+
+          echo "== Render config.toml for PARENT =="
+          export HOST_FQDN=$(hostname --fqdn)
+          export PARENT_CONNECTION_STRING="${{ secrets.PARENT_CONNECTION_STRING }}"
           envsubst < config_templates/parent_config.toml.tmpl > config.toml
-          mkdir -p ~/child_export
-          cp ~/automation/certs_work/*child* ~/child_export/ || true
-          chmod 644 ~/child_export/* || true
 
-    # 3️⃣ Transfer child certs to CHILD VM
-    - name: Transfer certs to child
-      uses: appleboy/scp-action@v0.1.7
-      with:
-        host: ${{ secrets.CHILD_IP }}
-        username: ${{ secrets.CHILD_USER }}
-        key: ${{ secrets.SSH_KEY }}
-        source: "/home/${{ secrets.PARENT_USER }}/child_export/*"
-        target: "/home/${{ secrets.CHILD_USER }}/child_received_certs"
+          echo "== Apply config on PARENT =="
+          ./scripts/03_setup_parent.sh
 
-    # 4️⃣ Copy scripts & templates to CHILD
+    ###########################################
+    # 4) Upload repo + certs to CHILD VM
+    ###########################################
     - name: Upload automation to child
       uses: appleboy/scp-action@v0.1.7
       with:
         host: ${{ secrets.CHILD_IP }}
         username: ${{ secrets.CHILD_USER }}
         key: ${{ secrets.SSH_KEY }}
-        source: "scripts/*,config_templates/*"
+        source: "."
         target: "/home/${{ secrets.CHILD_USER }}/automation"
 
-    # 5️⃣ Deploy on CHILD
+    ###########################################
+    # 5) Run deployment on CHILD
+    ###########################################
     - name: Deploy on Child VM
       uses: appleboy/ssh-action@v1.0.3
       with:
@@ -67,7 +106,21 @@ jobs:
         username: ${{ secrets.CHILD_USER }}
         key: ${{ secrets.SSH_KEY }}
         script: |
+          set -e
           cd ~/automation
-          bash scripts/01_install_runtime.sh
+
+          chmod +x scripts/*.sh
+
+          echo "== Install IoT Edge on CHILD =="
+          ./scripts/01_install_runtime.sh
+
+          echo "== Install certs on CHILD =="
+          ./scripts/02_install_certs_child.sh
+
+          echo "== Render config.toml for CHILD =="
+          export HOST_FQDN=$(hostname --fqdn)
+          export CHILD_CONNECTION_STRING="${{ secrets.CHILD_CONNECTION_STRING }}"
           envsubst < config_templates/child_config.toml.tmpl > config.toml
-          bash scripts/04_setup_child.sh
+
+          echo "== Apply config on CHILD =="
+          ./scripts/04_setup_child.sh
